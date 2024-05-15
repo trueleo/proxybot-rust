@@ -1,6 +1,7 @@
 use std::{
     env::{self, current_dir},
     future::Future,
+    net::SocketAddr,
     sync::{Arc, OnceLock},
 };
 
@@ -8,10 +9,10 @@ use dotenvy::dotenv;
 use sqlite::{Connection, ConnectionThreadSafe};
 use tgbot::{
     api::Client,
-    handler::{LongPoll, LongPollOptions, UpdateHandler},
+    handler::{UpdateHandler, WebhookServer},
     types::{
         AllowedUpdate, ChatPeerId, Command, CopyMessage, ForwardMessage, Message,
-        MessageReactionUpdated, ReplyTo, SendMessage, SetMessageReaction, TextEntity,
+        MessageReactionUpdated, ReplyTo, SendMessage, SetMessageReaction, SetWebhook, TextEntity,
         TextEntityPosition, Update, UpdateType,
     },
 };
@@ -81,7 +82,7 @@ async fn group_forward(
     let Some(ReplyTo::Message(reply_to)) = message.reply_to else {
         return Ok(());
     };
-    if reply_to.sender.get_user().is_some_and(|user| user.is_bot) {
+    if message.sender.get_user().is_some_and(|user| user.is_bot) {
         return Ok(());
     }
     let Some((user_id, _)) = db::get_from_message_id(db, reply_to.id)? else {
@@ -167,20 +168,42 @@ async fn main() {
     sqlite.execute(db::CREATE_STATEMENT).unwrap();
 
     let token = env::var("TGBOT_TOKEN").expect("TGBOT_TOKEN is not set");
-    let client = Client::new(token).expect("Failed to create API");
+    let client = Client::new(token.clone()).expect("Failed to create API");
 
-    LongPoll::new(
-        client.clone(),
+    let webhook_addr = env::var("WEBHOOK_ADDR")
+        .expect("WEBHOOK_ADDR is set")
+        .parse::<String>()
+        .expect("WEBHOOK_ADDR an String");
+
+    let mut webhook = SetWebhook::new(webhook_addr)
+        .with_secret_token(token)
+        .with_allowed_updates([AllowedUpdate::Message, AllowedUpdate::MessageReaction].into())
+        .with_drop_pending_updates(true);
+
+    if let Some(webhook_ip) = env::var("WEBHOOK_IP")
+        .ok()
+        .map(|value| value.parse::<String>().expect("WEBHOOK_IP an String"))
+    {
+        webhook = webhook.with_ip_address(webhook_ip)
+    }
+
+    if let Some(cert) = env::var("TLS_CERT")
+        .ok()
+        .map(|value| value.parse::<String>().expect("TLS_CERT an String"))
+    {
+        webhook = webhook.with_certificate(cert)
+    }
+
+    client.execute(webhook).await.unwrap();
+
+    WebhookServer::new(
+        "/",
         Handler {
             client: client.into(),
             db: sqlite.into(),
         },
     )
-    .with_options(
-        LongPollOptions::default()
-            .with_allowed_update(AllowedUpdate::MessageReaction)
-            .with_allowed_update(AllowedUpdate::Message),
-    )
-    .run()
-    .await;
+    .run("127.0.0.1:8080".parse::<SocketAddr>().unwrap())
+    .await
+    .unwrap();
 }

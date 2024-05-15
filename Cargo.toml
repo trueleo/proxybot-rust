@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 tokio = { version = "1.37", features = ["rt-multi-thread", "net", "macros"] }
-tgbot = { version = "0.23" }
+tgbot = { version = "0.23", features = ["webhook"] }
 dotenvy = "*"
 anyhow = "*"
 sqlite = "*"
