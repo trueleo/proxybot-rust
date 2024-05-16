@@ -1,22 +1,23 @@
-FROM rust:1.78.0-slim as builder
+FROM rust:alpine as builder
 
-RUN rustup target add x86_64-unknown-linux-musl && \
-    apt update && \
-    apt install -y musl-tools musl-dev && \
-    update-ca-certificates
+RUN apk add musl-dev
 
-COPY ./src ./src
-COPY ./Cargo.lock .
-COPY ./Cargo.toml .
-
-RUN cargo build --target x86_64-unknown-linux-musl --release
-
-FROM rust:1.78-alpine3.19
-
+RUN mkdir /app
 WORKDIR /app
 
-COPY ./.env .
+ARG RUSTFLAGS="-C target-feature=+crt-static"
 
-COPY --from=builder ./target/x86_64-unknown-linux-musl/release/proxybot .
+COPY Cargo.toml /app
+COPY Cargo.lock /app
+COPY src /app/src
 
-ENTRYPOINT ["./proxybot"]
+RUN cargo build --release --target=x86_64-unknown-linux-musl
+
+RUN strip -s /app/target/x86_64-unknown-linux-musl/release/proxybot && \
+    strip -R .comment -R .note -R .note.ABI-tag /app/target/x86_64-unknown-linux-musl/release/proxybot
+
+FROM scratch
+WORKDIR /app
+COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/proxybot /app/proxybot
+EXPOSE 8080
+CMD ["./proxybot"]

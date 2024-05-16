@@ -203,7 +203,7 @@ async fn main() {
             db: sqlite.into(),
         },
     )
-    .run("127.0.0.1:8080".parse::<SocketAddr>().unwrap())
+    .run("0.0.0.0:8080".parse::<SocketAddr>().unwrap())
     .await
     .unwrap();
 }
