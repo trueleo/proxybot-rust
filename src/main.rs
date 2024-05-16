@@ -38,7 +38,7 @@ async fn start(bot: &Client, message: &Message) -> Result<(), anyhow::Error> {
     let reply = vec![
         "Hi!",
         user,
-        ", Conversation with this bot is send to our admins.",
+        ", With this bot, you can converse with our admins.",
     ];
     let bold_text = TextEntity::bold(TextEntityPosition {
         offset: reply.iter().take(1).map(|&x| x.len() as u32).sum(),
@@ -164,7 +164,7 @@ async fn main() {
     dotenv().ok();
     env_logger::init();
 
-    let sqlite = Connection::open_thread_safe(current_dir().unwrap().join("db.db")).unwrap();
+    let sqlite = Connection::open_thread_safe(current_dir().unwrap().join("userdata.db")).unwrap();
     sqlite.execute(db::CREATE_STATEMENT).unwrap();
 
     let token = env::var("TGBOT_TOKEN").expect("TGBOT_TOKEN is not set");
@@ -203,7 +203,7 @@ async fn main() {
             db: sqlite.into(),
         },
     )
-    .run("127.0.0.1:8080".parse::<SocketAddr>().unwrap())
+    .run("[::]:8080".parse::<SocketAddr>().unwrap())
     .await
     .unwrap();
 }
