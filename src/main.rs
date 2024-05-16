@@ -164,7 +164,7 @@ async fn main() {
     dotenv().ok();
     env_logger::init();
 
-    let sqlite = Connection::open_thread_safe(current_dir().unwrap().join("db.db")).unwrap();
+    let sqlite = Connection::open_thread_safe(current_dir().unwrap().join("userdata.db")).unwrap();
     sqlite.execute(db::CREATE_STATEMENT).unwrap();
 
     let token = env::var("TGBOT_TOKEN").expect("TGBOT_TOKEN is not set");

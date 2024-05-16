@@ -19,5 +19,8 @@ RUN strip -s /app/target/x86_64-unknown-linux-musl/release/proxybot && \
 FROM scratch
 WORKDIR /app
 COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/proxybot /app/proxybot
+
+VOLUME ["/app/userdata.db"]
+
 EXPOSE 8080
 CMD ["./proxybot"]
