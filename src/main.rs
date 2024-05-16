@@ -38,7 +38,7 @@ async fn start(bot: &Client, message: &Message) -> Result<(), anyhow::Error> {
     let reply = vec![
         "Hi!",
         user,
-        ", Conversation with this bot is send to our admins.",
+        ", With this bot, you can converse with our admins.",
     ];
     let bold_text = TextEntity::bold(TextEntityPosition {
         offset: reply.iter().take(1).map(|&x| x.len() as u32).sum(),
@@ -203,7 +203,7 @@ async fn main() {
             db: sqlite.into(),
         },
     )
-    .run("0.0.0.0:8080".parse::<SocketAddr>().unwrap())
+    .run("[::]:8080".parse::<SocketAddr>().unwrap())
     .await
     .unwrap();
 }
