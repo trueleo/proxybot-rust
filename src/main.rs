@@ -170,13 +170,18 @@ async fn main() {
     let token = env::var("TGBOT_TOKEN").expect("TGBOT_TOKEN is not set");
     let client = Client::new(token.clone()).expect("Failed to create API");
 
+    let webhook_secret = env::var("WEBHOOK_SECRET")
+        .expect("WEBHOOK_SECRET is set")
+        .parse::<String>()
+        .expect("WEBHOOK_SECRET an String");
+
     let webhook_addr = env::var("WEBHOOK_ADDR")
         .expect("WEBHOOK_ADDR is set")
         .parse::<String>()
         .expect("WEBHOOK_ADDR an String");
 
     let mut webhook = SetWebhook::new(webhook_addr)
-        .with_secret_token(token)
+        .with_secret_token(webhook_secret)
         .with_allowed_updates([AllowedUpdate::Message, AllowedUpdate::MessageReaction].into())
         .with_drop_pending_updates(true);
 
