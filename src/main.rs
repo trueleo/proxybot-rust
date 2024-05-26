@@ -182,7 +182,7 @@ async fn main() {
         .expect("WEBHOOK_ADDR an String");
 
     let mut webhook = SetWebhook::new(webhook_addr)
-        .with_secret_token(webhook_secret)
+        .with_secret_token(&webhook_secret)
         .with_allowed_updates([AllowedUpdate::Message, AllowedUpdate::MessageReaction].into())
         .with_drop_pending_updates(true);
 
@@ -203,7 +203,7 @@ async fn main() {
     client.execute(webhook).await.unwrap();
 
     WebhookServer::new(
-        "/",
+        format!("/{}", &webhook_secret),
         Handler {
             client: client.into(),
             db: sqlite.into(),
