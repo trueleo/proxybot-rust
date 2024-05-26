@@ -162,7 +162,8 @@ async fn handle_updates(
 #[tokio::main]
 async fn main() {
     dotenv().ok();
-    env_logger::init();
+    tracing_subscriber::fmt::init();
+    log::debug!("Starting bot");
 
     let sqlite = Connection::open_thread_safe(current_dir().unwrap().join("userdata.db")).unwrap();
     sqlite.execute(db::CREATE_STATEMENT).unwrap();

@@ -8,8 +8,11 @@ edition = "2021"
 [dependencies]
 tokio = { version = "1.37", features = ["rt-multi-thread", "net", "macros"] }
 tgbot = { version = "0.23", features = ["webhook"] }
-dotenvy = "*"
-anyhow = "*"
-sqlite = "*"
-env_logger = "*"
-log = "*"
+dotenvy = "0.15"
+anyhow = "1.0"
+sqlite = "0.36"
+log = "0.4"
+tracing-subscriber = { version = "0.3", features = [
+    "env-filter",
+    "tracing-log",
+] }
