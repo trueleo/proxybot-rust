@@ -6,18 +6,20 @@ use std::{
 };
 
 use dotenvy::dotenv;
+use ratelimit::Limiter;
 use sqlite::{Connection, ConnectionThreadSafe};
 use tgbot::{
     api::Client,
     handler::{UpdateHandler, WebhookServer},
     types::{
-        AllowedUpdate, ChatPeerId, Command, CopyMessage, ForwardMessage, Message,
+        AllowedUpdate, ChatPeerId, Command, CopyMessage, ForwardMessage, Message, MessageOrigin,
         MessageReactionUpdated, ReplyTo, SendMessage, SetMessageReaction, SetWebhook, TextEntity,
         TextEntityPosition, Update, UpdateType,
     },
 };
 
 mod db;
+mod ratelimit;
 
 fn group_id() -> i64 {
     static GROUP_ID: OnceLock<i64> = OnceLock::new();
@@ -27,6 +29,11 @@ fn group_id() -> i64 {
             .parse::<i64>()
             .expect("GROUP_ID is an i64")
     })
+}
+
+fn limiter() -> &'static Limiter {
+    static LIMITER: OnceLock<Limiter> = OnceLock::new();
+    LIMITER.get_or_init(|| Limiter::default())
 }
 
 async fn start(bot: &Client, message: &Message) -> Result<(), anyhow::Error> {
@@ -54,6 +61,41 @@ async fn help(bot: &Client, message: &Message) -> Result<(), anyhow::Error> {
     let message = SendMessage::new(
         message.chat.get_id(),
         format!("Help! {}", message.chat.get_id()),
+    );
+    bot.execute(message).await?;
+    Ok(())
+}
+
+async fn ban(
+    bot: &Client,
+    db: &sqlite::ConnectionThreadSafe,
+    message: Message,
+) -> Result<(), anyhow::Error> {
+    let Some(ReplyTo::Message(reply_to)) = message.reply_to else {
+        return Ok(());
+    };
+    let Some((user_id, _)) = db::get_from_message_id(db, reply_to.id)? else {
+        let message = SendMessage::new(
+            message.chat.get_id(),
+            format!("Failed to ban this user because it does not exists in the database"),
+        );
+        bot.execute(message).await?;
+        return Err(anyhow::anyhow!("User trying to ban does not exist"));
+    };
+    db::ban(db, user_id)?;
+    let message = SendMessage::new(
+        message.chat.get_id(),
+        format!(
+            "Banned user {}",
+            reply_to
+                .forward_origin
+                .map(|forwarded_from| match forwarded_from {
+                    MessageOrigin::HiddenUser(user) => user.sender_user_name,
+                    MessageOrigin::User(user) => user.sender_user.first_name,
+                    _ => user_id.to_string(),
+                })
+                .unwrap_or_else(|| user_id.to_string())
+        ),
     );
     bot.execute(message).await?;
     Ok(())
@@ -101,6 +143,25 @@ async fn user_forward(
     let chat_id = message.chat.get_id();
     let dm_message_id = message.id;
 
+    if db::is_banned(db, chat_id)? {
+        bot.execute(SendMessage::new(
+            chat_id,
+            "You are banned from using this bot",
+        ))
+        .await?;
+    }
+
+    if let Err(interval) = limiter().wait(chat_id.into()) {
+        bot.execute(SendMessage::new(
+            chat_id,
+            format!(
+                "You have been timed out from sending anymore messages for {:?}",
+                interval
+            ),
+        ))
+        .await?;
+    }
+
     let ingroup_message = bot
         .execute(ForwardMessage::new(group_id(), chat_id, message.id))
         .await?;
@@ -145,6 +206,7 @@ async fn handle_updates(
                 match command.get_name() {
                     "/start" => start(&client, &message).await?,
                     "/help" => help(&client, &message).await?,
+                    "/ban" if chatid == group_id() => ban(&client, &db, message).await?,
                     _ => (),
                 }
             } else if chatid == group_id() {
@@ -166,7 +228,8 @@ async fn main() {
     log::debug!("Starting bot");
 
     let sqlite = Connection::open_thread_safe(current_dir().unwrap().join("userdata.db")).unwrap();
-    sqlite.execute(db::CREATE_STATEMENT).unwrap();
+    sqlite.execute(db::CREATE_MESSAGE_TABLE_STATEMENT).unwrap();
+    sqlite.execute(db::CREATE_BAN_TABLE_STATEMENT).unwrap();
 
     let token = env::var("TGBOT_TOKEN").expect("TGBOT_TOKEN is not set");
     let client = Client::new(token.clone()).expect("Failed to create API");
