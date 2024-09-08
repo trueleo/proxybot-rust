@@ -75,12 +75,9 @@ async fn ban(
         return Ok(());
     };
     let Some((user_id, _)) = db::get_from_message_id(db, reply_to.id)? else {
-        let message = SendMessage::new(
-            message.chat.get_id(),
-            format!("Failed to ban this user because it does not exists in the database"),
-        );
-        bot.execute(message).await?;
-        return Err(anyhow::anyhow!("User trying to ban does not exist"));
+        return Err(anyhow::anyhow!(
+            "User you are trying to ban does not exist in db"
+        ));
     };
     db::ban(db, user_id)?;
     let message = SendMessage::new(
@@ -143,23 +140,17 @@ async fn user_forward(
     let chat_id = message.chat.get_id();
     let dm_message_id = message.id;
 
+    if let Err(_) = limiter().wait(chat_id.into()) {
+        return Ok(());
+    }
+
     if db::is_banned(db, chat_id)? {
         bot.execute(SendMessage::new(
             chat_id,
             "You are banned from using this bot",
         ))
         .await?;
-    }
-
-    if let Err(interval) = limiter().wait(chat_id.into()) {
-        bot.execute(SendMessage::new(
-            chat_id,
-            format!(
-                "You have been timed out from sending anymore messages for {:?}",
-                interval
-            ),
-        ))
-        .await?;
+        return Ok(());
     }
 
     let ingroup_message = bot
