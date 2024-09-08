@@ -43,7 +43,7 @@ async fn start(bot: &Client, message: &Message) -> Result<(), anyhow::Error> {
         .map(|user| user.get_full_name())
         .unwrap_or_default();
     let reply = vec![
-        "Hi!",
+        "Hi! ",
         user,
         ", With this bot, you can converse with our admins.",
     ];
