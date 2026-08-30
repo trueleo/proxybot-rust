@@ -1,26 +1,21 @@
-FROM rust:alpine as builder
+FROM cgr.dev/chainguard/rust:latest AS builder
 
-RUN apk add musl-dev
+WORKDIR /work
 
-RUN mkdir /app
-WORKDIR /app
+ARG RUSTFLAGS="-C strip=symbols"
 
-ARG RUSTFLAGS="-C target-feature=+crt-static"
+COPY --chown=nonroot:nonroot Cargo.toml Cargo.lock ./
+COPY --chown=nonroot:nonroot src ./src
 
-COPY Cargo.toml /app
-COPY Cargo.lock /app
-COPY src /app/src
+RUN cargo build --release
+RUN mkdir /tmp/proxybot-data
 
-RUN cargo build --release --target=x86_64-unknown-linux-musl
+FROM cgr.dev/chainguard/glibc-dynamic:latest
 
-RUN strip -s /app/target/x86_64-unknown-linux-musl/release/proxybot && \
-    strip -R .comment -R .note -R .note.ABI-tag /app/target/x86_64-unknown-linux-musl/release/proxybot
+COPY --from=builder/work/target/release/proxybot /usr/local/bin/proxybot
+COPY --from=builder /tmp/proxybot-data /data
 
-FROM scratch
-WORKDIR /app
-COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/proxybot /app/proxybot
-
-VOLUME ["/app/userdata.db"]
-
+VOLUME ["/data"]
 EXPOSE 8080
-CMD ["./proxybot"]
+
+CMD ["/usr/local/bin/proxybot"]
