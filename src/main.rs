@@ -12,9 +12,9 @@ use tgbot::{
     api::Client,
     handler::{UpdateHandler, WebhookServer},
     types::{
-        AllowedUpdate, ChatPeerId, Command, CopyMessage, ForwardMessage, Message, MessageOrigin,
-        MessageReactionUpdated, ReplyTo, SendMessage, SetMessageReaction, SetWebhook, TextEntity,
-        TextEntityPosition, Update, UpdateType,
+        AllowedUpdate, ChatPeerId, Command, CopyMessage, ForwardMessage, InputFileReader, Message,
+        MessageOrigin, MessageReactionUpdated, ReplyTo, SendMessage, SetMessageReaction,
+        SetWebhook, TextEntity, TextEntityPosition, Update, UpdateType,
     },
 };
 
@@ -33,7 +33,7 @@ fn group_id() -> i64 {
 
 fn limiter() -> &'static Limiter {
     static LIMITER: OnceLock<Limiter> = OnceLock::new();
-    LIMITER.get_or_init(|| Limiter::default())
+    LIMITER.get_or_init(Limiter::default)
 }
 
 async fn start(bot: &Client, message: &Message) -> Result<(), anyhow::Error> {
@@ -51,8 +51,8 @@ async fn start(bot: &Client, message: &Message) -> Result<(), anyhow::Error> {
         offset: reply.iter().take(1).map(|&x| x.len() as u32).sum(),
         length: reply[1].len() as u32,
     });
-    let message = SendMessage::new(message.chat.get_id(), reply.into_iter().collect::<String>())
-        .with_entities(Some(bold_text));
+    let full_text = reply.into_iter().collect::<String>();
+    let message = SendMessage::new(message.chat.get_id(), (full_text, vec![bold_text]));
     bot.execute(message).await?;
     Ok(())
 }
@@ -140,7 +140,7 @@ async fn user_forward(
     let chat_id = message.chat.get_id();
     let dm_message_id = message.id;
 
-    if let Err(_) = limiter().wait(chat_id.into()) {
+    if limiter().wait(chat_id.into()).is_err() {
         return Ok(());
     }
 
@@ -179,7 +179,7 @@ impl UpdateHandler for Handler {
         async {
             let res = handle_updates(client, db, update).await;
             if let Err(err) = res {
-                log::error!("{}", err.to_string())
+                log::error!("{}", err)
             }
         }
     }
@@ -192,6 +192,7 @@ async fn handle_updates(
 ) -> Result<(), anyhow::Error> {
     match update.update_type {
         UpdateType::Message(message) => {
+            let message = *message;
             let chatid = message.chat.get_id();
             if let Ok(command) = Command::try_from(message.clone()) {
                 match command.get_name() {
@@ -206,7 +207,7 @@ async fn handle_updates(
                 user_forward(&client, &db, message).await?;
             }
         }
-        UpdateType::MessageReaction(message) => forward_reaction(&client, &db, message).await?,
+        UpdateType::MessageReaction(message) => forward_reaction(&client, &db, *message).await?,
         _ => (),
     }
     Ok(())
@@ -236,8 +237,8 @@ async fn main() {
         .expect("WEBHOOK_ADDR an String");
 
     let mut webhook = SetWebhook::new(webhook_addr)
-        .with_secret_token(&webhook_secret)
-        .with_allowed_updates([AllowedUpdate::Message, AllowedUpdate::MessageReaction].into())
+        .with_secret_token(webhook_secret.clone())
+        .with_allowed_updates([AllowedUpdate::Message, AllowedUpdate::MessageReaction])
         .with_drop_pending_updates(true);
 
     if let Some(webhook_ip) = env::var("WEBHOOK_IP")
@@ -247,17 +248,18 @@ async fn main() {
         webhook = webhook.with_ip_address(webhook_ip)
     }
 
-    if let Some(cert) = env::var("TLS_CERT")
-        .ok()
-        .map(|value| value.parse::<String>().expect("TLS_CERT an String"))
-    {
-        webhook = webhook.with_certificate(cert)
+    if let Ok(cert) = env::var("TLS_CERT") {
+        let file = tokio::fs::File::open(&cert)
+            .await
+            .expect("TLS_CERT file must be readable");
+        let reader = InputFileReader::new(file).with_file_name(cert.as_str());
+        webhook = webhook.with_certificate(reader);
     }
 
     client.execute(webhook).await.unwrap();
 
     WebhookServer::new(
-        format!("/{}", &webhook_secret),
+        format!("/{}", webhook_secret),
         Handler {
             client: client.into(),
             db: sqlite.into(),
