@@ -14,7 +14,7 @@ use tgbot::{
     types::{
         AllowedUpdate, ChatPeerId, Command, CopyMessage, ForwardMessage, InputFileReader, Message,
         MessageOrigin, MessageReactionUpdated, ReplyTo, SendMessage, SetMessageReaction,
-        SetWebhook, TextEntity, TextEntityPosition, Update, UpdateType,
+        SetWebhook, Text, TextEntity, TextEntityPosition, Update, UpdateType,
     },
 };
 
@@ -98,6 +98,90 @@ async fn ban(
     Ok(())
 }
 
+async fn list_blocked(
+    bot: &Client,
+    db: &sqlite::ConnectionThreadSafe,
+    message: &Message,
+) -> Result<(), anyhow::Error> {
+    let blocked_texts = db::blocked_texts(db)?;
+    if blocked_texts.is_empty() {
+        bot.execute(SendMessage::new(message.chat.get_id(), "No blocked texts"))
+            .await?;
+        return Ok(());
+    }
+    let list: Vec<String> = blocked_texts
+        .into_iter()
+        .map(|(id, text)| format!("{}: {}", id, text))
+        .collect();
+    bot.execute(SendMessage::new(
+        message.chat.get_id(),
+        format!("Blocked texts:\n{}", list.join("\n")),
+    ))
+    .await?;
+    Ok(())
+}
+
+async fn block(
+    bot: &Client,
+    db: &sqlite::ConnectionThreadSafe,
+    message: &Message,
+) -> Result<(), anyhow::Error> {
+    let Some(text_object) = message.get_text() else {
+        return Ok(());
+    };
+    let Some(text) = text_object.data.strip_prefix("/block") else {
+        bot.execute(SendMessage::new(message.chat.get_id(), "No text to block"))
+            .await?;
+        return Ok(());
+    };
+    let text = text.trim();
+    if text.is_empty() {
+        bot.execute(SendMessage::new(message.chat.get_id(), "No text to block"))
+            .await?;
+        return Ok(());
+    }
+    db::block_text(db, text)?;
+    bot.execute(SendMessage::new(
+        message.chat.get_id(),
+        "Added to block list",
+    ))
+    .await?;
+    Ok(())
+}
+
+async fn unblock(
+    bot: &Client,
+    db: &sqlite::ConnectionThreadSafe,
+    message: &Message,
+) -> Result<(), anyhow::Error> {
+    let Some(text_object) = message.get_text() else {
+        return Ok(());
+    };
+    let Some(text) = text_object.data.strip_prefix("/unblock") else {
+        bot.execute(SendMessage::new(
+            message.chat.get_id(),
+            "No argument provided",
+        ))
+        .await?;
+        return Ok(());
+    };
+    let Some(number) = text.trim().parse().ok() else {
+        bot.execute(SendMessage::new(
+            message.chat.get_id(),
+            "Could not parse text into number",
+        ))
+        .await?;
+        return Ok(());
+    };
+    db::unblock_text(db, number)?;
+    bot.execute(SendMessage::new(
+        message.chat.get_id(),
+        "Removed from block list",
+    ))
+    .await?;
+    Ok(())
+}
+
 async fn forward_reaction(
     bot: &Client,
     db: &sqlite::ConnectionThreadSafe,
@@ -153,6 +237,41 @@ async fn user_forward(
         return Ok(());
     }
 
+    let blocked_texts = db::blocked_texts(db)?;
+    if let Some(Text { data, entities }) = message.get_text() {
+        let links_hidden_in_entities: Vec<_> = entities
+            .as_ref()
+            .map(|entities| {
+                entities
+                    .into_iter()
+                    .flat_map(|entity| {
+                        if let TextEntity::TextLink { url, .. } = entity {
+                            Some(url)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        for (_, blocked_text) in blocked_texts {
+            if data.contains(&blocked_text)
+                || links_hidden_in_entities
+                    .iter()
+                    .any(|url| url.contains(&blocked_text))
+            {
+                db::ban(db, chat_id).unwrap();
+                bot.execute(SendMessage::new(
+                    chat_id,
+                    "You are banned from using this bot",
+                ))
+                .await?;
+                return Ok(());
+            }
+        }
+    }
+
     let ingroup_message = bot
         .execute(ForwardMessage::new(group_id(), chat_id, message.id))
         .await?;
@@ -199,6 +318,11 @@ async fn handle_updates(
                     "/start" => start(&client, &message).await?,
                     "/help" => help(&client, &message).await?,
                     "/ban" if chatid == group_id() => ban(&client, &db, message).await?,
+                    "/block" if chatid == group_id() => block(&client, &db, &message).await?,
+                    "/unblock" if chatid == group_id() => unblock(&client, &db, &message).await?,
+                    "/blocklist" if chatid == group_id() => {
+                        list_blocked(&client, &db, &message).await?
+                    }
                     _ => (),
                 }
             } else if chatid == group_id() {
@@ -222,6 +346,9 @@ async fn main() {
     let sqlite = Connection::open_thread_safe(current_dir().unwrap().join("userdata.db")).unwrap();
     sqlite.execute(db::CREATE_MESSAGE_TABLE_STATEMENT).unwrap();
     sqlite.execute(db::CREATE_BAN_TABLE_STATEMENT).unwrap();
+    sqlite
+        .execute(db::CREATE_BLOCKED_TEXT_TABLE_STATEMENT)
+        .unwrap();
 
     let token = env::var("TGBOT_TOKEN").expect("TGBOT_TOKEN is not set");
     let client = Client::new(token.clone()).expect("Failed to create API");

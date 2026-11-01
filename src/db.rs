@@ -3,6 +3,8 @@ use sqlite::State;
 pub const CREATE_MESSAGE_TABLE_STATEMENT: &str = "CREATE TABLE IF NOT EXISTS forwards (message_id INTEGER PRIMARY KEY, user_id INTEGER, dm_message_id INTEGER);";
 pub const CREATE_BAN_TABLE_STATEMENT: &str =
     "CREATE TABLE IF NOT EXISTS bans (user_id INTEGER PRIMARY KEY)";
+pub const CREATE_BLOCKED_TEXT_TABLE_STATEMENT: &str =
+    "CREATE TABLE IF NOT EXISTS blocked_texts (text TEXT UNIQUE)";
 
 pub fn get_from_message_id(
     db: &sqlite::ConnectionThreadSafe,
@@ -11,7 +13,7 @@ pub fn get_from_message_id(
     let mut query =
         db.prepare("select user_id, dm_message_id from forwards where message_id = ?")?;
     query.bind((1, message_id.into()))?;
-    let res = if let Ok(State::Row) = query.next() {
+    let res = if query.next()? == State::Row {
         Some((
             query.read::<i64, _>("user_id").unwrap(),
             query.read::<i64, _>("dm_message_id").unwrap(),
@@ -54,5 +56,32 @@ pub fn insert_into(
         "INSERT INTO forwards VALUES ({}, {}, {})",
         values.message_id, values.user_id, values.dm_message_id
     ))?;
+    Ok(())
+}
+
+pub fn blocked_texts(
+    db: &sqlite::ConnectionThreadSafe,
+) -> Result<Vec<(i64, String)>, anyhow::Error> {
+    let mut query = db.prepare("SELECT rowid, text FROM blocked_texts")?;
+    let mut res = Vec::new();
+    while query.next()? != State::Done {
+        let row = query.read::<i64, _>("rowid")?;
+        let text = query.read::<String, _>("text")?;
+        res.push((row, text));
+    }
+    Ok(res)
+}
+
+pub fn block_text(db: &sqlite::ConnectionThreadSafe, text: &str) -> Result<(), anyhow::Error> {
+    let mut stmt = db.prepare("INSERT OR IGNORE INTO blocked_texts (text) VALUES (?)")?;
+    stmt.bind((1, text))?;
+    stmt.next()?;
+    Ok(())
+}
+
+pub fn unblock_text(db: &sqlite::ConnectionThreadSafe, row: i64) -> Result<(), anyhow::Error> {
+    let mut query = db.prepare("DELETE FROM blocked_texts WHERE rowid = ?")?;
+    query.bind((1, row))?;
+    query.next()?;
     Ok(())
 }
